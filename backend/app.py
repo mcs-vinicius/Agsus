@@ -3,14 +3,35 @@ import os
 import pandas as pd
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
+from sqlalchemy import create_engine, text
+from dotenv import load_dotenv
 import io
+
+load_dotenv() # Carrega variáveis do arquivo .env
 
 # --- Configuração ---
 app = Flask(__name__)
 CORS(app) # Permite requisições do frontend
 
+# --- Conexão com o Banco de Dados ---
+DB_USER = "root"
+DB_PASSWORD ="root"
+DB_HOST = "localhost"
+DB_NAME = "student_db"
+
+# String de conexão com o SQLAlchemy
+db_connection_str = f'mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}'
+db_engine = create_engine(db_connection_str)
+
+
 # --- Funções de Processamento de Dados ---
-# A função processar_arquivos permanece a mesma, pois contém a lógica principal de tratamento dos dados.
+
+# backend/app.py
+
+# ... (mantenha o início do seu arquivo: imports, app, conexão com DB) ...
+
+# backend/app.py
+
 def processar_arquivos(file_inscricoes, file_notas):
     # Tenta ler os CSVs com diferentes separadores
     try:
@@ -34,6 +55,7 @@ def processar_arquivos(file_inscricoes, file_notas):
         missing_cols = [col for col in required_notas_cols if col not in df_notas.columns]
         raise ValueError(f"Arquivo 'Notas' inválido. Faltam as colunas: {', '.join(missing_cols)}")
 
+
     # --- 1. Validação de campos em branco e separação de inconsistências ---
     inconsistentes = []
 
@@ -50,14 +72,17 @@ def processar_arquivos(file_inscricoes, file_notas):
         inconsistentes.append({'dados_originais': row.to_json(force_ascii=False), 'motivo_inconsistencia': 'Campo em branco no arquivo de Notas'})
     df_notas.dropna(subset=cols_to_check_notas, inplace=True)
 
+
     # --- 2. Processamento do arquivo de Inscrições ---
     df_inscricoes.rename(columns={'nome_inscricao': 'nome_completo', 'email_inscricao': 'email'}, inplace=True)
     df_inscricoes.drop_duplicates(subset=['nome_completo', 'email'], keep='first', inplace=True)
+
 
     # --- 3. Processamento do arquivo de Notas ---
     df_notas['nome_completo'] = df_notas['nome_nota'].astype(str) + ' ' + df_notas['sobrenome_nota'].astype(str)
     df_notas.rename(columns={'email_nota': 'email'}, inplace=True)
     df_notas.drop_duplicates(subset=['nome_completo', 'email'], keep='first', inplace=True)
+
 
     # --- 4. União (Merge) dos dois arquivos ---
     df_merged = pd.merge(df_inscricoes, df_notas, on=['nome_completo', 'email'], how='outer', indicator=True)
@@ -86,7 +111,7 @@ def processar_arquivos(file_inscricoes, file_notas):
     df_final['situacao'] = df_final['nota'].apply(calcular_situacao)
     df_final['nota'] = pd.to_numeric(df_final['nota'], errors='coerce')
 
-    # --- Seleção e Ordenação Final das Colunas ---
+    # Garante que todas as colunas esperadas existam no df_final, preenchendo com None se faltar
     colunas_finais = [
         'identificador', 'pedido', 'produto', 'nome_completo', 'nascimento',
         'genero', 'email', 'profissao', 'especialidade', 'vinculo',
@@ -98,12 +123,24 @@ def processar_arquivos(file_inscricoes, file_notas):
             
     df_final = df_final[colunas_finais]
 
+    # --- 6. Conversão final dos formatos de data (NOVA SEÇÃO) ---
+    date_columns = ['pedido', 'nascimento', 'concluido']
+    for col in date_columns:
+        if col in df_final.columns:
+            # Converte a coluna para datetime, interpretando DD/MM/AAAA corretamente
+            df_final[col] = pd.to_datetime(df_final[col], dayfirst=True, errors='coerce')
+
     return df_final, pd.DataFrame(inconsistentes)
+# ... (mantenha o resto do seu arquivo: os endpoints @app.route) ...
 
-# --- Endpoint da API ---
 
-@app.route('/api/processar-e-baixar', methods=['POST'])
-def processar_e_baixar():
+# --- Endpoints da API ---
+
+# Lembre-se de garantir que 'text' foi importado no topo do arquivo!
+# from sqlalchemy import create_engine, text
+
+@app.route('/api/upload', methods=['POST'])
+def upload_files():
     if 'inscricoes' not in request.files or 'notas' not in request.files:
         return jsonify({"error": "Arquivos 'inscricoes' e 'notas' são obrigatórios"}), 400
 
@@ -113,13 +150,55 @@ def processar_e_baixar():
     try:
         df_processado, df_inconsistente = processar_arquivos(file_inscricoes, file_notas)
 
+        # Salva no banco de dados
+        with db_engine.connect() as connection:
+            # Limpa tabelas antes de inserir novos dados
+            connection.execute(text('TRUNCATE TABLE alunos_processados;'))
+            connection.execute(text('TRUNCATE TABLE alunos_inconsistentes;'))
+            connection.commit() # Confirma a execução do TRUNCATE
+            
+            # Insere os novos dados
+            df_processado.to_sql('alunos_processados', con=connection, if_exists='append', index=False)
+            if not df_inconsistente.empty:
+                df_inconsistente.to_sql('alunos_inconsistentes', con=connection, if_exists='append', index=False)
+            
+            # Confirma a inserção dos novos dados
+            connection.commit()
+
+        return jsonify({
+            "message": "Arquivos processados e salvos com sucesso!",
+            "alunos_validos": len(df_processado),
+            "alunos_inconsistentes": len(df_inconsistente)
+        })
+
+    except Exception as e:
+        return jsonify({"error": f"Ocorreu um erro no processamento: {str(e)}"}), 500
+
+
+@app.route('/api/students', methods=['GET'])
+def get_students():
+    try:
+        with db_engine.connect() as connection:
+            df_validos = pd.read_sql('SELECT * FROM alunos_processados', connection)
+            df_inconsistentes = pd.read_sql('SELECT * FROM alunos_inconsistentes', connection)
+        
+        return jsonify({
+            "validos": df_validos.to_dict(orient='records'),
+            "inconsistentes": df_inconsistentes.to_dict(orient='records')
+        })
+    except Exception as e:
+        return jsonify({"error": f"Erro ao buscar dados: {str(e)}"}), 500
+
+@app.route('/api/download', methods=['GET'])
+def download_file():
+    try:
+        with db_engine.connect() as connection:
+            df_export = pd.read_sql('SELECT * FROM alunos_processados', connection)
+        
         # Cria um buffer de bytes na memória para o arquivo Excel
         output = io.BytesIO()
-        # O formato .xlsx é mais moderno, mas se precisar do .xls antigo, a biblioteca 'xlwt' seria necessária.
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df_processado.to_excel(writer, index=False, sheet_name='Alunos Processados')
-            if not df_inconsistente.empty:
-                df_inconsistente.to_excel(writer, index=False, sheet_name='Dados Inconsistentes')
+            df_export.to_excel(writer, index=False, sheet_name='Alunos Processados')
         
         output.seek(0) # Volta ao início do buffer
 
@@ -127,13 +206,11 @@ def processar_e_baixar():
             output,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             as_attachment=True,
-            download_name='alunos_processados.xlsx'
+            download_name='alunos_processados.xlsx' # .xlsx é o formato moderno
         )
 
-    except ValueError as ve:
-        return jsonify({"error": f"Erro de validação: {str(ve)}"}), 400
     except Exception as e:
-        return jsonify({"error": f"Ocorreu um erro no processamento: {str(e)}"}), 500
+        return jsonify({"error": f"Erro ao gerar arquivo para download: {str(e)}"}), 500
 
 
 if __name__ == '__main__':
