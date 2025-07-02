@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import axios from 'axios';
 import styled, { createGlobalStyle, ThemeProvider } from 'styled-components';
 import { theme } from './theme';
 
-// --- Estilos Globais e do App (sem alterações) ---
+// --- Estilos (sem alterações) ---
+// Mantenha todos os seus componentes de estilo (GlobalStyle, AppContainer, etc.)
+
 const GlobalStyle = createGlobalStyle`
   body {
     background-color: ${props => props.theme.colors.background};
@@ -96,7 +98,13 @@ const DownloadButton = styled.a`
     font-weight: bold;
     cursor: pointer;
 
-    &:hover {
+    &.disabled {
+        background-color: #ccc;
+        cursor: not-allowed;
+        pointer-events: none;
+    }
+
+    &:hover:not(.disabled) {
         background-color: #baffae;
     }
 `;
@@ -139,7 +147,7 @@ const TabButton = styled.button`
     font-weight: bold;
 `;
 
-// --- Componente App com as correções ---
+
 function App() {
   const [inscricoesFile, setInscricoesFile] = useState(null);
   const [notasFile, setNotasFile] = useState(null);
@@ -147,10 +155,26 @@ function App() {
   const [inconsistentData, setInconsistentData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [requestId, setRequestId] = useState(null);
   
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('Todos');
   const [activeTab, setActiveTab] = useState('validos');
+
+  const fetchData = async (id) => {
+      if (!id) return;
+      try {
+          const response = await axios.get(`http://localhost:5000/api/students/${id}`);
+          setValidStudents(response.data.validos || []);
+          setInconsistentData(response.data.inconsistentes || []);
+          setMessage("Pré-visualização dos dados gerada. Clique em 'Baixar .XLSX' para obter o arquivo.");
+      } catch (error) {
+          console.error("Erro ao buscar dados:", error);
+          setMessage(error.response?.data?.error || 'Erro ao buscar dados.');
+          setValidStudents([]);
+          setInconsistentData([]);
+      }
+  };
 
   const handleUpload = async () => {
     if (!inscricoesFile || !notasFile) {
@@ -158,7 +182,11 @@ function App() {
       return;
     }
     setLoading(true);
+    // Limpa os dados e mensagens anteriores
     setMessage('');
+    setRequestId(null);
+    setValidStudents([]);
+    setInconsistentData([]);
 
     const formData = new FormData();
     formData.append('inscricoes', inscricoesFile);
@@ -168,8 +196,15 @@ function App() {
       const response = await axios.post('http://localhost:5000/api/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      setMessage(response.data.message);
-      fetchData();
+      
+      const newRequestId = response.data.requestId;
+      if (newRequestId) {
+        setRequestId(newRequestId);
+        fetchData(newRequestId); // Busca os dados para a pré-visualização
+      } else {
+        setMessage(response.data.message || "Ocorreu um erro, ID da requisição não retornado.");
+      }
+
     } catch (error) {
       setMessage(error.response?.data?.error || 'Erro no upload');
     } finally {
@@ -177,35 +212,17 @@ function App() {
     }
   };
 
-  const fetchData = async () => {
-      try {
-          const response = await axios.get('http://localhost:5000/api/students');
-          setValidStudents(response.data.validos);
-          setInconsistentData(response.data.inconsistentes);
-      } catch (error) {
-          console.error("Erro ao buscar dados:", error);
-          // Em caso de erro, garante que os estados sejam arrays vazios
-          setValidStudents([]);
-          setInconsistentData([]);
-      }
-  };
-
-  useEffect(() => {
-      fetchData();
-  }, []);
-
   const filteredStudents = useMemo(() => {
-      // **CORREÇÃO PRINCIPAL AQUI**
       return (validStudents || [])
           .filter(student => 
-              student.nome_completo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-              student.email.toLowerCase().includes(searchTerm.toLowerCase())
+              (student.nome_completo?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+              (student.email?.toLowerCase() || '').includes(searchTerm.toLowerCase())
           )
           .filter(student => 
               statusFilter === 'Todos' || student.situacao === statusFilter
           );
   }, [searchTerm, statusFilter, validStudents]);
-
+  
   return (
     <ThemeProvider theme={theme}>
       <GlobalStyle />
@@ -216,94 +233,99 @@ function App() {
           <h2>1. Faça o Upload dos Arquivos</h2>
           <div>
             <FileInputLabel htmlFor="inscricoes">Arquivo de Inscrições (.csv): </FileInputLabel>
-            <input type="file" id="inscricoes" accept=".csv" onChange={e => setInscricoesFile(e.target.files[0])} />
+            <input type="file" id="inscricoes" accept=".csv" onChange={e => { setInscricoesFile(e.target.files[0]); setRequestId(null); }} />
           </div>
           <div>
             <FileInputLabel htmlFor="notas">Arquivo de Notas (.csv): </FileInputLabel>
-            <input type="file" id="notas" accept=".csv" onChange={e => setNotasFile(e.target.files[0])} />
+            <input type="file" id="notas" accept=".csv" onChange={e => { setNotasFile(e.target.files[0]); setRequestId(null); }} />
           </div>
           <UploadButton onClick={handleUpload} disabled={loading}>
-            {loading ? 'Processando...' : 'Processar e Salvar Dados'}
+            {loading ? 'Processando...' : 'Processar e Visualizar Dados'}
           </UploadButton>
           {message && <p>{message}</p>}
         </UploadSection>
+        
+        {/* Renderiza a seção de visualização se houver um ID de requisição */}
+        {requestId && (
+          <>
+            <h2>2. Pré-visualização dos Dados</h2>
+            <TabContainer>
+                <TabButton onClick={() => setActiveTab('validos')} $active={activeTab === 'validos'}>
+                    Alunos Válidos ({filteredStudents.length})
+                </TabButton>
+                <TabButton onClick={() => setActiveTab('inconsistentes')} $active={activeTab === 'inconsistentes'}>
+                    Dados Inconsistentes ({inconsistentData.length})
+                </TabButton>
+            </TabContainer>
 
-        <h2>2. Visualize os Dados</h2>
-
-        <TabContainer>
-            <TabButton onClick={() => setActiveTab('validos')} $active={activeTab === 'validos'}>
-                Alunos Válidos ({(filteredStudents || []).length})
-            </TabButton>
-            <TabButton onClick={() => setActiveTab('inconsistentes')} $active={activeTab === 'inconsistentes'}>
-                {/* **CORREÇÃO DE SEGURANÇA AQUI** */}
-                Dados Inconsistentes ({(inconsistentData || []).length})
-            </TabButton>
-        </TabContainer>
-
-        {activeTab === 'validos' && (
-            <TableContainer>
-                <Toolbar>
-                    <SearchInput 
-                        type="text" 
-                        placeholder="Buscar por nome ou email..."
-                        value={searchTerm}
-                        onChange={e => setSearchTerm(e.target.value)}
-                    />
-                    <FilterSelect value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-                        <option value="Todos">Todos</option>
-                        <option value="Aprovado">Aprovados</option>
-                        <option value="Reprovado">Reprovados</option>
-                        <option value="Não Avaliado">Não Avaliados</option>
-                    </FilterSelect>
-                    <DownloadButton href="http://localhost:5000/api/download" target="_blank">
-                        Baixar .XLS
-                    </DownloadButton>
-                </Toolbar>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>ID</th><th>Nome</th><th>Email</th><th>Situação</th><th>Nota</th><th>Produto</th><th>Pedido</th>
-                            <th>Nascimento</th><th>Gênero</th><th>Profissão</th><th>Estado</th><th>Concluído</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {/* **CORREÇÃO DE SEGURANÇA AQUI** */}
-                        {(filteredStudents || []).map(student => (
-                            <tr key={student.id}>
-                                <td>{student.identificador}</td><td>{student.nome_completo}</td><td>{student.email}</td>
-                                <td>{student.situacao}</td><td>{student.nota}</td><td>{student.produto}</td><td>{student.pedido}</td>
-                                <td>{student.nascimento}</td><td>{student.genero}</td><td>{student.profissao}</td>
-                                <td>{student.estado}</td><td>{student.concluido}</td>
+            {activeTab === 'validos' && (
+                <TableContainer>
+                    <Toolbar>
+                        <SearchInput 
+                            type="text" 
+                            placeholder="Buscar por nome ou email..."
+                            value={searchTerm}
+                            onChange={e => setSearchTerm(e.target.value)}
+                        />
+                        <FilterSelect value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+                            <option value="Todos">Todos</option>
+                            <option value="Aprovado">Aprovados</option>
+                            <option value="Reprovado">Reprovados</option>
+                            <option value="Não Avaliado">Não Avaliados</option>
+                        </FilterSelect>
+                        <DownloadButton 
+                          href={`http://localhost:5000/api/download/${requestId}`}
+                          target="_blank"
+                          download
+                        >
+                            Baixar .XLSX
+                        </DownloadButton>
+                    </Toolbar>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th><th>Nome</th><th>Email</th><th>Situação</th><th>Nota</th><th>Produto</th><th>Pedido</th>
+                                <th>Nascimento</th><th>Gênero</th><th>Profissão</th><th>Estado</th><th>Concluído</th>
                             </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </TableContainer>
-        )}
-        {activeTab === 'inconsistentes' && (
-            <TableContainer>
-                <table>
-                    <thead>
-                        <tr>
-                           <th>Motivo da Inconsistência</th>
-                           <th>Dados Originais</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {/* **CORREÇÃO DE SEGURANÇA AQUI** */}
-                        {(inconsistentData || []).map(item => (
-                            <tr key={item.id}>
-                                <td>{item.motivo_inconsistencia}</td>
-                                <td>{item.dados_originais}</td>
+                        </thead>
+                        <tbody>
+                            {filteredStudents.map((student, index) => (
+                                <tr key={student.email || index}>
+                                    <td>{student.identificador}</td><td>{student.nome_completo}</td><td>{student.email}</td>
+                                    <td>{student.situacao}</td><td>{student.nota}</td><td>{student.produto}</td><td>{student.pedido}</td>
+                                    <td>{student.nascimento}</td><td>{student.genero}</td><td>{student.profissao}</td>
+                                    <td>{student.estado}</td><td>{student.concluido}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </TableContainer>
+            )}
+            {activeTab === 'inconsistentes' && (
+                <TableContainer>
+                    <table>
+                        <thead>
+                            <tr>
+                               <th>Motivo da Inconsistência</th>
+                               <th>Dados Originais</th>
                             </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </TableContainer>
+                        </thead>
+                        <tbody>
+                            {inconsistentData.map((item, index) => (
+                                <tr key={index}>
+                                    <td>{item.motivo_inconsistencia}</td>
+                                    <td>{item.dados_originais}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </TableContainer>
+            )}
+          </>
         )}
       </AppContainer>
     </ThemeProvider>
   );
 }
 
-export default App; 
+export default App;

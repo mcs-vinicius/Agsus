@@ -3,9 +3,9 @@ import os
 import pandas as pd
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
-from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 import io
+import uuid
 
 load_dotenv() # Carrega variáveis do arquivo .env
 
@@ -13,24 +13,12 @@ load_dotenv() # Carrega variáveis do arquivo .env
 app = Flask(__name__)
 CORS(app) # Permite requisições do frontend
 
-# --- Conexão com o Banco de Dados ---
-DB_USER = "root"
-DB_PASSWORD ="root"
-DB_HOST = "localhost"
-DB_NAME = "student_db"
+# --- Armazenamento em Memória ---
+# Dicionário para armazenar os dataframes processados por requisição
+dados_processados = {}
 
-# String de conexão com o SQLAlchemy
-db_connection_str = f'mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}'
-db_engine = create_engine(db_connection_str)
-
-
-# --- Funções de Processamento de Dados ---
-
-# backend/app.py
-
-# ... (mantenha o início do seu arquivo: imports, app, conexão com DB) ...
-
-# backend/app.py
+# --- Funções de Processamento de Dados (sem alterações) ---
+# Mantenha sua função processar_arquivos exatamente como está
 
 def processar_arquivos(file_inscricoes, file_notas):
     # Tenta ler os CSVs com diferentes separadores
@@ -131,13 +119,8 @@ def processar_arquivos(file_inscricoes, file_notas):
             df_final[col] = pd.to_datetime(df_final[col], dayfirst=True, errors='coerce')
 
     return df_final, pd.DataFrame(inconsistentes)
-# ... (mantenha o resto do seu arquivo: os endpoints @app.route) ...
-
 
 # --- Endpoints da API ---
-
-# Lembre-se de garantir que 'text' foi importado no topo do arquivo!
-# from sqlalchemy import create_engine, text
 
 @app.route('/api/upload', methods=['POST'])
 def upload_files():
@@ -150,23 +133,18 @@ def upload_files():
     try:
         df_processado, df_inconsistente = processar_arquivos(file_inscricoes, file_notas)
 
-        # Salva no banco de dados
-        with db_engine.connect() as connection:
-            # Limpa tabelas antes de inserir novos dados
-            connection.execute(text('TRUNCATE TABLE alunos_processados;'))
-            connection.execute(text('TRUNCATE TABLE alunos_inconsistentes;'))
-            connection.commit() # Confirma a execução do TRUNCATE
-            
-            # Insere os novos dados
-            df_processado.to_sql('alunos_processados', con=connection, if_exists='append', index=False)
-            if not df_inconsistente.empty:
-                df_inconsistente.to_sql('alunos_inconsistentes', con=connection, if_exists='append', index=False)
-            
-            # Confirma a inserção dos novos dados
-            connection.commit()
+        # Gera um ID único para esta requisição
+        request_id = str(uuid.uuid4())
+        
+        # Armazena os dataframes na memória
+        dados_processados[request_id] = {
+            "validos": df_processado,
+            "inconsistentes": df_inconsistente
+        }
 
         return jsonify({
-            "message": "Arquivos processados e salvos com sucesso!",
+            "message": "Arquivos processados com sucesso!",
+            "requestId": request_id, # Envia o ID para o frontend
             "alunos_validos": len(df_processado),
             "alunos_inconsistentes": len(df_inconsistente)
         })
@@ -175,12 +153,15 @@ def upload_files():
         return jsonify({"error": f"Ocorreu um erro no processamento: {str(e)}"}), 500
 
 
-@app.route('/api/students', methods=['GET'])
-def get_students():
+@app.route('/api/students/<request_id>', methods=['GET'])
+def get_students(request_id):
+    if request_id not in dados_processados:
+        return jsonify({"error": "Dados não encontrados para este ID."}), 404
+        
     try:
-        with db_engine.connect() as connection:
-            df_validos = pd.read_sql('SELECT * FROM alunos_processados', connection)
-            df_inconsistentes = pd.read_sql('SELECT * FROM alunos_inconsistentes', connection)
+        dados = dados_processados[request_id]
+        df_validos = dados["validos"]
+        df_inconsistentes = dados["inconsistentes"]
         
         return jsonify({
             "validos": df_validos.to_dict(orient='records'),
@@ -189,18 +170,19 @@ def get_students():
     except Exception as e:
         return jsonify({"error": f"Erro ao buscar dados: {str(e)}"}), 500
 
-@app.route('/api/download', methods=['GET'])
-def download_file():
+@app.route('/api/download/<request_id>', methods=['GET'])
+def download_file(request_id):
+    if request_id not in dados_processados:
+        return jsonify({"error": "Dados não encontrados para este ID."}), 404
+
     try:
-        with db_engine.connect() as connection:
-            df_export = pd.read_sql('SELECT * FROM alunos_processados', connection)
+        df_export = dados_processados[request_id]["validos"]
         
-        # Cria um buffer de bytes na memória para o arquivo Excel
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_export.to_excel(writer, index=False, sheet_name='Alunos Processados')
         
-        output.seek(0) # Volta ao início do buffer
+        output.seek(0)
 
         return send_file(
             output,
