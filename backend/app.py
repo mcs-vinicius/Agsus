@@ -17,8 +17,7 @@ CORS(app) # Permite requisições do frontend
 # Dicionário para armazenar os dataframes processados por requisição
 dados_processados = {}
 
-# --- Funções de Processamento de Dados (sem alterações) ---
-# Mantenha sua função processar_arquivos exatamente como está
+# --- Funções de Processamento de Dados ---
 
 def processar_arquivos(file_inscricoes, file_notas):
     # Tenta ler os CSVs com diferentes separadores
@@ -42,7 +41,6 @@ def processar_arquivos(file_inscricoes, file_notas):
     if not all(col in df_notas.columns for col in required_notas_cols):
         missing_cols = [col for col in required_notas_cols if col not in df_notas.columns]
         raise ValueError(f"Arquivo 'Notas' inválido. Faltam as colunas: {', '.join(missing_cols)}")
-
 
     # --- 1. Validação de campos em branco e separação de inconsistências ---
     inconsistentes = []
@@ -111,12 +109,12 @@ def processar_arquivos(file_inscricoes, file_notas):
             
     df_final = df_final[colunas_finais]
 
-    # --- 6. Conversão final dos formatos de data (NOVA SEÇÃO) ---
+    # --- 6. Conversão de datas ---
     date_columns = ['pedido', 'nascimento', 'concluido']
     for col in date_columns:
         if col in df_final.columns:
-            # Converte a coluna para datetime, interpretando DD/MM/AAAA corretamente
-            df_final[col] = pd.to_datetime(df_final[col], dayfirst=True, errors='coerce')
+            df_final[col] = pd.to_datetime(df_final[col], errors='coerce', dayfirst=True)
+
 
     return df_final, pd.DataFrame(inconsistentes)
 
@@ -133,10 +131,8 @@ def upload_files():
     try:
         df_processado, df_inconsistente = processar_arquivos(file_inscricoes, file_notas)
 
-        # Gera um ID único para esta requisição
         request_id = str(uuid.uuid4())
         
-        # Armazena os dataframes na memória
         dados_processados[request_id] = {
             "validos": df_processado,
             "inconsistentes": df_inconsistente
@@ -144,7 +140,7 @@ def upload_files():
 
         return jsonify({
             "message": "Arquivos processados com sucesso!",
-            "requestId": request_id, # Envia o ID para o frontend
+            "requestId": request_id,
             "alunos_validos": len(df_processado),
             "alunos_inconsistentes": len(df_inconsistente)
         })
@@ -160,8 +156,14 @@ def get_students(request_id):
         
     try:
         dados = dados_processados[request_id]
-        df_validos = dados["validos"]
-        df_inconsistentes = dados["inconsistentes"]
+        df_validos = dados["validos"].copy()
+        df_inconsistentes = dados["inconsistentes"].copy()
+
+        # CORREÇÃO: Converte colunas de data para string antes de enviar como JSON
+        date_columns = ['pedido', 'nascimento', 'concluido']
+        for col in date_columns:
+            if col in df_validos.columns:
+                df_validos[col] = df_validos[col].dt.strftime('%d/%m/%Y').replace('NaT', None)
         
         return jsonify({
             "validos": df_validos.to_dict(orient='records'),
@@ -176,10 +178,18 @@ def download_file(request_id):
         return jsonify({"error": "Dados não encontrados para este ID."}), 404
 
     try:
-        df_export = dados_processados[request_id]["validos"]
+        df_export = dados_processados[request_id]["validos"].copy()
+
+        # Formata as datas para o Excel
+        date_columns = ['pedido', 'nascimento', 'concluido']
+        for col in date_columns:
+            if col in df_export.columns:
+                 df_export[col] = pd.to_datetime(df_export[col]).dt.date
         
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        with pd.ExcelWriter(output, engine='openpyxl',
+                            date_format='DD/MM/YYYY',
+                            datetime_format='DD/MM/YYYY') as writer:
             df_export.to_excel(writer, index=False, sheet_name='Alunos Processados')
         
         output.seek(0)
@@ -188,7 +198,7 @@ def download_file(request_id):
             output,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             as_attachment=True,
-            download_name='alunos_processados.xlsx' # .xlsx é o formato moderno
+            download_name='alunos_processados.xlsx'
         )
 
     except Exception as e:

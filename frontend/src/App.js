@@ -3,68 +3,93 @@ import axios from 'axios';
 import styled, { createGlobalStyle, ThemeProvider } from 'styled-components';
 import { theme } from './theme';
 
-// --- Estilos (sem alterações) ---
-// Mantenha todos os seus componentes de estilo (GlobalStyle, AppContainer, etc.)
+// --- Estilos (sem alterações, mantidos como na versão anterior) ---
 
 const GlobalStyle = createGlobalStyle`
   body {
-    background-color: ${props => props.theme.colors.background};
+    background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%);
     color: ${props => props.theme.colors.text};
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-family: 'Orbitron', sans-serif; /* Fonte com tema espacial */
     margin: 0;
     padding: 20px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  * {
+    box-sizing: border-box;
+    text-shadow: ${props => props.theme.shadows.textGlow};
   }
 `;
 
 const AppContainer = styled.div`
   max-width: 1400px;
   margin: auto;
+  animation: fadeIn 1s ease-in-out;
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
 `;
 
 const Header = styled.header`
-  background-color: ${props => props.theme.colors.primary};
+  background: linear-gradient(145deg, rgba(13,13,43,0.8), rgba(26,26,58,0.8));
   padding: 20px;
-  border-radius: 8px;
+  border-radius: 10px;
   text-align: center;
-  margin-bottom: 20px;
-  box-shadow: ${props => props.theme.shadow};
+  margin-bottom: 30px;
+  border: 1px solid ${props => props.theme.colors.secondary};
+  box-shadow: ${props => props.theme.shadows.glowPrimary};
 
   h1 {
     margin: 0;
     color: ${props => props.theme.colors.white};
+    font-size: 2.5em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2px;
   }
 `;
 
 const UploadSection = styled.div`
-  background-color: ${props => props.theme.colors.white};
-  padding: 20px;
+  background: rgba(26, 26, 58, 0.6);
+  padding: 30px;
   border-radius: 8px;
-  box-shadow: ${props => props.theme.shadow};
+  border: 1px solid ${props => props.theme.colors.accent};
+  box-shadow: ${props => props.theme.shadows.glowAccent};
   margin-bottom: 20px;
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 20px;
 `;
 
 const FileInputLabel = styled.label`
   font-weight: bold;
+  font-size: 1.1em;
+  color: ${props => props.theme.colors.secondary};
 `;
 
 const UploadButton = styled.button`
-  padding: 10px 15px;
+  padding: 12px 20px;
   background-color: ${props => props.theme.colors.accent};
-  color: ${props => props.theme.colors.text};
+  color: ${props => props.theme.colors.white};
   border: none;
   border-radius: 5px;
   cursor: pointer;
   font-weight: bold;
-  transition: background-color: 0.3s;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  transition: all 0.3s;
+  box-shadow: ${props => props.theme.shadows.glowAccent};
 
-  &:hover {
-    background-color: #ffafcc;
+  &:hover:not(:disabled) {
+    transform: scale(1.05);
+    background-color: #ff33ff;
   }
   &:disabled {
-    background-color: #ccc;
+    background-color: #555;
+    box-shadow: none;
     cursor: not-allowed;
   }
 `;
@@ -77,76 +102,99 @@ const Toolbar = styled.div`
 `;
 
 const SearchInput = styled.input`
-    padding: 8px;
+    padding: 10px;
     border-radius: 5px;
-    border: 1px solid #ccc;
+    border: 1px solid ${props => props.theme.colors.secondary};
+    background-color: ${props => props.theme.colors.darkBlue};
+    color: ${props => props.theme.colors.text};
     width: 300px;
 `;
 
 const FilterSelect = styled.select`
-    padding: 8px;
+    padding: 10px;
     border-radius: 5px;
-    border: 1px solid #ccc;
+    border: 1px solid ${props => props.theme.colors.secondary};
+    background-color: ${props => props.theme.colors.darkBlue};
+    color: ${props => props.theme.colors.text};
 `;
 
 const DownloadButton = styled.a`
-    padding: 8px 15px;
+    padding: 10px 18px;
     background-color: ${props => props.theme.colors.success};
-    color: ${props => props.theme.colors.text};
+    color: ${props => props.theme.colors.dark};
     border-radius: 5px;
     text-decoration: none;
     font-weight: bold;
     cursor: pointer;
+    transition: all 0.3s;
+    box-shadow: ${props => props.theme.shadows.glowSuccess};
 
     &.disabled {
-        background-color: #ccc;
+        background-color: #555;
+        box-shadow: none;
         cursor: not-allowed;
         pointer-events: none;
     }
 
     &:hover:not(.disabled) {
-        background-color: #baffae;
+        transform: scale(1.05);
     }
 `;
 
 const TableContainer = styled.div`
     overflow-x: auto;
-    background-color: ${props => props.theme.colors.white};
+    background: rgba(13, 13, 43, 0.7);
     padding: 20px;
     border-radius: 8px;
-    box-shadow: ${props => props.theme.shadow};
+    border: 1px solid ${props => props.theme.colors.secondary};
+    box-shadow: ${props => props.theme.shadows.glowPrimary};
 
     table {
         width: 100%;
         border-collapse: collapse;
 
         th, td {
-            padding: 12px;
-            border-bottom: 1px solid #ddd;
+            padding: 15px;
+            border-bottom: 1px solid ${props => props.theme.colors.secondary};
             text-align: left;
         }
 
         th {
-            background-color: ${props => props.theme.colors.secondary};
+            background-color: ${props => props.theme.colors.primary};
+            color: ${props => props.theme.colors.secondary};
+            text-transform: uppercase;
+        }
+
+        tr:hover {
+          background-color: ${props => props.theme.colors.darkBlue};
         }
     }
 `;
 
 const TabContainer = styled.div`
     display: flex;
-    margin-bottom: -1px;
+    margin-bottom: 0px;
 `;
 
 const TabButton = styled.button`
-    padding: 10px 20px;
+    padding: 12px 24px;
     cursor: pointer;
-    border: 1px solid #ccc;
+    border: 1px solid ${props => props.$active ? props.theme.colors.secondary : '#444'};
     border-bottom: none;
-    background-color: ${props => props.$active ? props.theme.colors.white : '#f1f1f1'};
+    background: ${props => props.$active ? 'rgba(13, 13, 43, 0.9)' : 'rgba(26, 26, 58, 0.7)'};
+    color: ${props => props.$active ? props.theme.colors.secondary : props.theme.colors.text};
     border-radius: 8px 8px 0 0;
     font-weight: bold;
+    transition: all 0.3s;
+    
+    &:hover {
+        background: rgba(13, 13, 43, 0.9);
+        color: ${props => props.theme.colors.secondary};
+    }
 `;
 
+
+// --- Componente Principal ---
 
 function App() {
   const [inscricoesFile, setInscricoesFile] = useState(null);
@@ -161,6 +209,23 @@ function App() {
   const [statusFilter, setStatusFilter] = useState('Todos');
   const [activeTab, setActiveTab] = useState('validos');
 
+  const clearData = () => {
+    setValidStudents([]);
+    setInconsistentData([]);
+    setMessage('');
+    setRequestId(null);
+    setSearchTerm('');
+    setStatusFilter('Todos');
+    if (document.getElementById('inscricoes')) {
+      document.getElementById('inscricoes').value = '';
+    }
+    if (document.getElementById('notas')) {
+      document.getElementById('notas').value = '';
+    }
+    setInscricoesFile(null);
+    setNotasFile(null);
+  };
+  
   const fetchData = async (id) => {
       if (!id) return;
       try {
@@ -188,6 +253,7 @@ function App() {
     setValidStudents([]);
     setInconsistentData([]);
 
+
     const formData = new FormData();
     formData.append('inscricoes', inscricoesFile);
     formData.append('notas', notasFile);
@@ -200,7 +266,7 @@ function App() {
       const newRequestId = response.data.requestId;
       if (newRequestId) {
         setRequestId(newRequestId);
-        fetchData(newRequestId); // Busca os dados para a pré-visualização
+        fetchData(newRequestId); 
       } else {
         setMessage(response.data.message || "Ocorreu um erro, ID da requisição não retornado.");
       }
@@ -211,6 +277,11 @@ function App() {
       setLoading(false);
     }
   };
+  
+  const handleDownloadClick = () => {
+    setTimeout(clearData, 2000); // Atraso para garantir que o download inicie
+  };
+
 
   const filteredStudents = useMemo(() => {
       return (validStudents || [])
@@ -227,25 +298,25 @@ function App() {
     <ThemeProvider theme={theme}>
       <GlobalStyle />
       <AppContainer>
-        <Header><h1>Student Data Unifier</h1></Header>
+        <Header><h1>AGSUS - Unificador de Dados</h1></Header>
 
         <UploadSection>
           <h2>1. Faça o Upload dos Arquivos</h2>
           <div>
             <FileInputLabel htmlFor="inscricoes">Arquivo de Inscrições (.csv): </FileInputLabel>
-            <input type="file" id="inscricoes" accept=".csv" onChange={e => { setInscricoesFile(e.target.files[0]); setRequestId(null); }} />
+            <input type="file" id="inscricoes" accept=".csv" onChange={e => setInscricoesFile(e.target.files[0])} />
           </div>
           <div>
             <FileInputLabel htmlFor="notas">Arquivo de Notas (.csv): </FileInputLabel>
-            <input type="file" id="notas" accept=".csv" onChange={e => { setNotasFile(e.target.files[0]); setRequestId(null); }} />
+            <input type="file" id="notas" accept=".csv" onChange={e => setNotasFile(e.target.files[0])} />
           </div>
-          <UploadButton onClick={handleUpload} disabled={loading}>
+          <UploadButton onClick={handleUpload} disabled={loading || !inscricoesFile || !notasFile}>
             {loading ? 'Processando...' : 'Processar e Visualizar Dados'}
           </UploadButton>
           {message && <p>{message}</p>}
         </UploadSection>
         
-        {/* Renderiza a seção de visualização se houver um ID de requisição */}
+        {/* CORREÇÃO: Renderiza a seção de visualização se houver um ID de requisição, mesmo que as listas estejam vazias */}
         {requestId && (
           <>
             <h2>2. Pré-visualização dos Dados</h2>
@@ -277,8 +348,9 @@ function App() {
                           href={`http://localhost:5000/api/download/${requestId}`}
                           target="_blank"
                           download
+                          onClick={handleDownloadClick}
                         >
-                            Baixar .XLSX
+                            Baixar .XLSX e Limpar
                         </DownloadButton>
                     </Toolbar>
                     <table>
@@ -289,14 +361,18 @@ function App() {
                             </tr>
                         </thead>
                         <tbody>
-                            {filteredStudents.map((student, index) => (
+                          {filteredStudents.length > 0 ? (
+                            filteredStudents.map((student, index) => (
                                 <tr key={student.email || index}>
                                     <td>{student.identificador}</td><td>{student.nome_completo}</td><td>{student.email}</td>
                                     <td>{student.situacao}</td><td>{student.nota}</td><td>{student.produto}</td><td>{student.pedido}</td>
                                     <td>{student.nascimento}</td><td>{student.genero}</td><td>{student.profissao}</td>
                                     <td>{student.estado}</td><td>{student.concluido}</td>
                                 </tr>
-                            ))}
+                            ))
+                          ) : (
+                            <tr><td colSpan="12">Nenhum aluno válido encontrado com os filtros atuais.</td></tr>
+                          )}
                         </tbody>
                     </table>
                 </TableContainer>
@@ -311,12 +387,16 @@ function App() {
                             </tr>
                         </thead>
                         <tbody>
-                            {inconsistentData.map((item, index) => (
+                          {inconsistentData.length > 0 ? (
+                            inconsistentData.map((item, index) => (
                                 <tr key={index}>
                                     <td>{item.motivo_inconsistencia}</td>
                                     <td>{item.dados_originais}</td>
                                 </tr>
-                            ))}
+                            ))
+                          ) : (
+                            <tr><td colSpan="2">Nenhum dado inconsistente encontrado.</td></tr>
+                          )}
                         </tbody>
                     </table>
                 </TableContainer>
