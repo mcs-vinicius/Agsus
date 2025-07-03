@@ -3,13 +3,13 @@ import axios from 'axios';
 import styled, { createGlobalStyle, ThemeProvider } from 'styled-components';
 import { theme } from './theme';
 
-// --- Estilos (sem alterações, mantidos como na versão anterior) ---
+// --- Estilos (sem alterações) ---
 
 const GlobalStyle = createGlobalStyle`
   body {
     background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%);
     color: ${props => props.theme.colors.text};
-    font-family: 'Orbitron', sans-serif; /* Fonte com tema espacial */
+    font-family: 'Orbitron', sans-serif;
     margin: 0;
     padding: 20px;
     -webkit-font-smoothing: antialiased;
@@ -23,7 +23,7 @@ const GlobalStyle = createGlobalStyle`
 `;
 
 const AppContainer = styled.div`
-  max-width: 1400px;
+  max-width: 1600px;
   margin: auto;
   animation: fadeIn 1s ease-in-out;
 
@@ -157,6 +157,7 @@ const TableContainer = styled.div`
             padding: 15px;
             border-bottom: 1px solid ${props => props.theme.colors.secondary};
             text-align: left;
+            white-space: nowrap;
         }
 
         th {
@@ -199,19 +200,24 @@ const TabButton = styled.button`
 function App() {
   const [inscricoesFile, setInscricoesFile] = useState(null);
   const [notasFile, setNotasFile] = useState(null);
+  const [progressoFile, setProgressoFile] = useState(null);
   const [validStudents, setValidStudents] = useState([]);
-  const [inconsistentData, setInconsistentData] = useState([]);
+  const [inscricoesError, setInscricoesError] = useState([]);
+  const [notasError, setNotasError] = useState([]);
+  const [progressoError, setProgressoError] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [requestId, setRequestId] = useState(null);
-  
+
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('Todos');
   const [activeTab, setActiveTab] = useState('validos');
 
   const clearData = () => {
     setValidStudents([]);
-    setInconsistentData([]);
+    setInscricoesError([]);
+    setNotasError([]);
+    setProgressoError([]);
     setMessage('');
     setRequestId(null);
     setSearchTerm('');
@@ -222,28 +228,36 @@ function App() {
     if (document.getElementById('notas')) {
       document.getElementById('notas').value = '';
     }
+    if (document.getElementById('progresso')) {
+      document.getElementById('progresso').value = '';
+    }
     setInscricoesFile(null);
     setNotasFile(null);
+    setProgressoFile(null);
   };
-  
+
   const fetchData = async (id) => {
-      if (!id) return;
-      try {
-          const response = await axios.get(`http://localhost:5000/api/students/${id}`);
-          setValidStudents(response.data.validos || []);
-          setInconsistentData(response.data.inconsistentes || []);
-          setMessage("Pré-visualização dos dados gerada. Clique em 'Baixar .XLSX' para obter o arquivo.");
-      } catch (error) {
-          console.error("Erro ao buscar dados:", error);
-          setMessage(error.response?.data?.error || 'Erro ao buscar dados.');
-          setValidStudents([]);
-          setInconsistentData([]);
-      }
+    if (!id) return;
+    try {
+      const response = await axios.get(`http://localhost:5000/api/students/${id}`);
+      setValidStudents(response.data.validos || []);
+      setInscricoesError(response.data.inscricoes_error || []);
+      setNotasError(response.data.notas_error || []);
+      setProgressoError(response.data.progresso_error || []);
+      setMessage("Pré-visualização dos dados gerada. Clique em 'Baixar .XLSX' para obter o arquivo.");
+    } catch (error) {
+      console.error("Erro ao buscar dados:", error);
+      setMessage(error.response?.data?.error || 'Erro ao buscar dados.');
+      setValidStudents([]);
+      setInscricoesError([]);
+      setNotasError([]);
+      setProgressoError([]);
+    }
   };
 
   const handleUpload = async () => {
-    if (!inscricoesFile || !notasFile) {
-      alert('Por favor, selecione os dois arquivos.');
+    if (!inscricoesFile || !notasFile || !progressoFile) {
+      alert('Por favor, selecione os três arquivos.');
       return;
     }
     setLoading(true);
@@ -251,22 +265,25 @@ function App() {
     setMessage('');
     setRequestId(null);
     setValidStudents([]);
-    setInconsistentData([]);
-
+    setInscricoesError([]);
+    setNotasError([]);
+    setProgressoError([]);
 
     const formData = new FormData();
     formData.append('inscricoes', inscricoesFile);
     formData.append('notas', notasFile);
+    formData.append('progresso', progressoFile);
+
 
     try {
       const response = await axios.post('http://localhost:5000/api/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      
+
       const newRequestId = response.data.requestId;
       if (newRequestId) {
         setRequestId(newRequestId);
-        fetchData(newRequestId); 
+        fetchData(newRequestId);
       } else {
         setMessage(response.data.message || "Ocorreu um erro, ID da requisição não retornado.");
       }
@@ -277,23 +294,47 @@ function App() {
       setLoading(false);
     }
   };
-  
+
   const handleDownloadClick = () => {
     setTimeout(clearData, 2000); // Atraso para garantir que o download inicie
   };
 
 
   const filteredStudents = useMemo(() => {
-      return (validStudents || [])
-          .filter(student => 
-              (student.nome_completo?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
-              (student.email?.toLowerCase() || '').includes(searchTerm.toLowerCase())
-          )
-          .filter(student => 
-              statusFilter === 'Todos' || student.situacao === statusFilter
-          );
+    return (validStudents || [])
+      .filter(student =>
+        (student.nome_completo?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+        (student.email?.toLowerCase() || '').includes(searchTerm.toLowerCase())
+      )
+      .filter(student =>
+        statusFilter === 'Todos' || student.situacao === statusFilter
+      );
   }, [searchTerm, statusFilter, validStudents]);
   
+  const renderTable = (data, headers, noDataMessage, colSpan) => (
+    <TableContainer>
+      <table>
+        <thead>
+          <tr>
+            {headers.map(header => <th key={header}>{header}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {data.length > 0 ? (
+            data.map((item, index) => (
+              <tr key={index}>
+                {headers.map(header => <td key={header}>{item[header.toLowerCase().replace(/ /g, '_')] || JSON.stringify(item)}</td>)}
+              </tr>
+            ))
+          ) : (
+            <tr><td colSpan={colSpan}>{noDataMessage}</td></tr>
+          )}
+        </tbody>
+      </table>
+    </TableContainer>
+  );
+
+
   return (
     <ThemeProvider theme={theme}>
       <GlobalStyle />
@@ -310,97 +351,71 @@ function App() {
             <FileInputLabel htmlFor="notas">Arquivo de Notas (.csv): </FileInputLabel>
             <input type="file" id="notas" accept=".csv" onChange={e => setNotasFile(e.target.files[0])} />
           </div>
-          <UploadButton onClick={handleUpload} disabled={loading || !inscricoesFile || !notasFile}>
+          <div>
+            <FileInputLabel htmlFor="progresso">Arquivo de Progresso (.csv): </FileInputLabel>
+            <input type="file" id="progresso" accept=".csv" onChange={e => setProgressoFile(e.target.files[0])} />
+          </div>
+          <UploadButton onClick={handleUpload} disabled={loading || !inscricoesFile || !notasFile || !progressoFile}>
             {loading ? 'Processando...' : 'Processar e Visualizar Dados'}
           </UploadButton>
           {message && <p>{message}</p>}
         </UploadSection>
-        
-        {/* CORREÇÃO: Renderiza a seção de visualização se houver um ID de requisição, mesmo que as listas estejam vazias */}
+
         {requestId && (
           <>
             <h2>2. Pré-visualização dos Dados</h2>
             <TabContainer>
-                <TabButton onClick={() => setActiveTab('validos')} $active={activeTab === 'validos'}>
-                    Alunos Válidos ({filteredStudents.length})
-                </TabButton>
-                <TabButton onClick={() => setActiveTab('inconsistentes')} $active={activeTab === 'inconsistentes'}>
-                    Dados Inconsistentes ({inconsistentData.length})
-                </TabButton>
+              <TabButton onClick={() => setActiveTab('validos')} $active={activeTab === 'validos'}>
+                Alunos Válidos ({filteredStudents.length})
+              </TabButton>
+              <TabButton onClick={() => setActiveTab('inscricoes_error')} $active={activeTab === 'inscricoes_error'}>
+                Erros Inscrições ({inscricoesError.length})
+              </TabButton>
+              <TabButton onClick={() => setActiveTab('notas_error')} $active={activeTab === 'notas_error'}>
+                Erros Notas ({notasError.length})
+              </TabButton>
+              <TabButton onClick={() => setActiveTab('progresso_error')} $active={activeTab === 'progresso_error'}>
+                Erros Progresso ({progressoError.length})
+              </TabButton>
             </TabContainer>
 
             {activeTab === 'validos' && (
-                <TableContainer>
-                    <Toolbar>
-                        <SearchInput 
-                            type="text" 
-                            placeholder="Buscar por nome ou email..."
-                            value={searchTerm}
-                            onChange={e => setSearchTerm(e.target.value)}
-                        />
-                        <FilterSelect value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-                            <option value="Todos">Todos</option>
-                            <option value="Aprovado">Aprovados</option>
-                            <option value="Reprovado">Reprovados</option>
-                            <option value="Não Avaliado">Não Avaliados</option>
-                        </FilterSelect>
-                        <DownloadButton 
-                          href={`http://localhost:5000/api/download/${requestId}`}
-                          target="_blank"
-                          download
-                          onClick={handleDownloadClick}
-                        >
-                            Baixar .XLSX e Limpar
-                        </DownloadButton>
-                    </Toolbar>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>ID</th><th>Nome</th><th>Email</th><th>Situação</th><th>Nota</th><th>Produto</th><th>Pedido</th>
-                                <th>Nascimento</th><th>Gênero</th><th>Profissão</th><th>Estado</th><th>Concluído</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                          {filteredStudents.length > 0 ? (
-                            filteredStudents.map((student, index) => (
-                                <tr key={student.email || index}>
-                                    <td>{student.identificador}</td><td>{student.nome_completo}</td><td>{student.email}</td>
-                                    <td>{student.situacao}</td><td>{student.nota}</td><td>{student.produto}</td><td>{student.pedido}</td>
-                                    <td>{student.nascimento}</td><td>{student.genero}</td><td>{student.profissao}</td>
-                                    <td>{student.estado}</td><td>{student.concluido}</td>
-                                </tr>
-                            ))
-                          ) : (
-                            <tr><td colSpan="12">Nenhum aluno válido encontrado com os filtros atuais.</td></tr>
-                          )}
-                        </tbody>
-                    </table>
-                </TableContainer>
+              <TableContainer>
+                <Toolbar>
+                  <SearchInput
+                    type="text"
+                    placeholder="Buscar por nome ou email..."
+                    value={searchTerm}
+                    onChange={e => setSearchTerm(e.target.value)}
+                  />
+                  <FilterSelect value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+                    <option value="Todos">Todos</option>
+                    <option value="Aprovado">Aprovados</option>
+                    <option value="Reprovado">Reprovados</option>
+                    <option value="Não Avaliado">Não Avaliados</option>
+                  </FilterSelect>
+                  <DownloadButton
+                    href={`http://localhost:5000/api/download/${requestId}`}
+                    target="_blank"
+                    download
+                    onClick={handleDownloadClick}
+                  >
+                    Baixar .XLSX e Limpar
+                  </DownloadButton>
+                </Toolbar>
+                {renderTable(
+                  filteredStudents,
+                  ["identificador", "pedido", "produto", "nome_completo", "nascimento", "genero", "email", "profissao", "especialidade", "vinculo", "cidade", "estado", "concluido", "nota", "progresso", "situacao"],
+                  "Nenhum aluno válido encontrado com os filtros atuais.",
+                  16
+                )}
+              </TableContainer>
             )}
-            {activeTab === 'inconsistentes' && (
-                <TableContainer>
-                    <table>
-                        <thead>
-                            <tr>
-                               <th>Motivo da Inconsistência</th>
-                               <th>Dados Originais</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                          {inconsistentData.length > 0 ? (
-                            inconsistentData.map((item, index) => (
-                                <tr key={index}>
-                                    <td>{item.motivo_inconsistencia}</td>
-                                    <td>{item.dados_originais}</td>
-                                </tr>
-                            ))
-                          ) : (
-                            <tr><td colSpan="2">Nenhum dado inconsistente encontrado.</td></tr>
-                          )}
-                        </tbody>
-                    </table>
-                </TableContainer>
-            )}
+            
+            {activeTab === 'inscricoes_error' && renderTable(inscricoesError, Object.keys(inscricoesError[0] || {}), "Nenhum erro encontrado nas inscrições.", 2)}
+            {activeTab === 'notas_error' && renderTable(notasError, Object.keys(notasError[0] || {}), "Nenhum erro encontrado nas notas.", 2)}
+            {activeTab === 'progresso_error' && renderTable(progressoError, Object.keys(progressoError[0] || {}), "Nenhum erro encontrado no progresso.", 2)}
+            
           </>
         )}
       </AppContainer>
