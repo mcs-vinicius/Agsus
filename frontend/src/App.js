@@ -22,7 +22,6 @@ const moveBackground = keyframes`
   100% { background-position: 0% 50%; }
 `;
 
-
 // --- Estilos Globais e Contêineres ---
 
 const GlobalStyle = createGlobalStyle`
@@ -93,22 +92,19 @@ const Section = styled.section`
     }
 `;
 
-
 // --- Componentes de Upload Dinâmicos ---
 
 const UploadGrid = styled.div`
   display: grid;
-  /* Alterado para 3 colunas */
   grid-template-columns: repeat(3, 1fr);
   gap: 25px;
   margin-bottom: auto;
-  align-items: center; /* Alinha verticalmente os itens no centro */
+  align-items: center;
 
   @media (max-width: 900px) {
-    grid-template-columns: 1fr; /* Volta para uma coluna em telas menores */
+    grid-template-columns: 1fr;
   }
 `;
-
 
 const HiddenInput = styled.input.attrs({ type: 'file' })`
   width: 0.1px;
@@ -132,10 +128,8 @@ const FileInputLabel = styled.label`
   transition: all 0.3s ease;
   box-shadow: ${props => (props.$hasFile ? props.theme.shadows.glowSuccess : 'none')};
   display: block;
-  text-align: center; /* Centraliza o texto do botão */
+  text-align: center;
   margin: auto;
-  
-
 
   &:hover {
     transform: translateY(-2px);
@@ -144,13 +138,12 @@ const FileInputLabel = styled.label`
 `;
 
 const FileName = styled.span`
-  display: block; /* Garante que o nome do arquivo fique abaixo do botão */
-  margin-top: 8px; /* Espaçamento entre o botão e o nome do arquivo */
+  display: block;
+  margin-top: 8px;
   font-style: italic;
   font-size: 0.9em;
-  text-align: center; /* Centraliza o nome do arquivo */
+  text-align: center;
   color: ${props => (props.$hasFile ? props.theme.colors.success : props.theme.colors.text)};
-  /* Garante que o texto não quebre e exibe "..." se for muito longo */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -170,8 +163,8 @@ const UploadButton = styled.button`
   text-transform: uppercase;
   letter-spacing: 1.5px;
   transition: all 0.3s ease;
-  display: block; /* Para permitir margem automática */
-  margin: 20px auto 0; /* Centraliza o botão */
+  display: block;
+  margin: 20px auto 0;
 
   &:disabled {
     background-color: #555;
@@ -203,7 +196,6 @@ const FileInput = ({ id, accept, onChange, file, labelText, fileName }) => (
         </FileName>
     </div>
 );
-
 
 // --- Barra de Ferramentas e Tabela ---
 
@@ -308,7 +300,7 @@ const TableContainer = styled.div`
 
 const TabContainer = styled.div`
     display: flex;
-    margin-bottom: -1px; /* Para conectar com a Section */
+    margin-bottom: -1px;
     position: relative;
     z-index: 5;
 `;
@@ -330,7 +322,6 @@ const TabButton = styled.button`
         color: ${props => props.theme.colors.secondary};
     }
 `;
-
 
 // --- Componente Principal ---
 
@@ -383,11 +374,13 @@ function App() {
     if (!id) return;
     try {
       const response = await axios.get(`http://localhost:5000/api/students/${id}`);
+      // Adicionado para depuração
+      console.log("Dados recebidos do backend:", response.data); 
       setValidStudents(response.data.validos || []);
       setInscricoesError(response.data.inscricoes_error || []);
       setNotasError(response.data.notas_error || []);
       setProgressoError(response.data.progresso_error || []);
-      setMessage("Pré-visualização dos dados gerada. Clique em 'Baixar .XLSX' para obter o arquivo.");
+      setMessage("Pré-visualização dos dados gerada. Clique em 'Extrair em Exel' para obter o arquivo.");
     } catch (error) {
       console.error("Erro ao buscar dados:", error);
       setMessage(error.response?.data?.error || 'Erro ao buscar dados.');
@@ -404,7 +397,6 @@ function App() {
       return;
     }
     setLoading(true);
-    // Limpa os dados e mensagens anteriores
     setMessage('');
     setRequestId(null);
     setValidStudents([]);
@@ -417,7 +409,6 @@ function App() {
     formData.append('notas', notasFile);
     formData.append('progresso', progressoFile);
 
-
     try {
       const response = await axios.post('http://localhost:5000/api/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
@@ -426,11 +417,10 @@ function App() {
       const newRequestId = response.data.requestId;
       if (newRequestId) {
         setRequestId(newRequestId);
-        fetchData(newRequestId);
+        await fetchData(newRequestId); // Garante que os dados são buscados antes de continuar
       } else {
         setMessage(response.data.message || "Ocorreu um erro, ID da requisição não retornado.");
       }
-
     } catch (error) {
       setMessage(error.response?.data?.error || 'Erro no upload');
     } finally {
@@ -439,44 +429,62 @@ function App() {
   };
 
   const handleDownloadClick = () => {
-    setTimeout(clearData, 2000); // Atraso para garantir que o download inicie
+    setTimeout(clearData, 2000);
   };
 
-
   const filteredStudents = useMemo(() => {
-    return (validStudents || [])
-      .filter(student =>
-        (student.nome_completo?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
-        (student.email?.toLowerCase() || '').includes(searchTerm.toLowerCase())
-      )
-      .filter(student =>
-        statusFilter === 'Todos' || student.situacao === statusFilter
-      );
+    if (!Array.isArray(validStudents)) {
+      return [];
+    }
+
+    return validStudents.filter(student => {
+      const statusMatch = statusFilter === 'Todos' || student.situacao === statusFilter;
+      const term = searchTerm.toLowerCase();
+      const nameMatch = student.nome_completo?.toLowerCase().includes(term);
+      const emailMatch = student.email?.toLowerCase().includes(term);
+      const searchMatch = term === '' || nameMatch || emailMatch;
+      
+      return statusMatch && searchMatch;
+    });
   }, [searchTerm, statusFilter, validStudents]);
   
-  const renderTable = (data, headers, noDataMessage, colSpan) => (
-    <TableContainer>
-      <table>
-        <thead>
-          <tr>
-            {headers.map(header => <th key={header}>{header.replace(/_/g, ' ')}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {data.length > 0 ? (
-            data.map((item, index) => (
-              <tr key={index}>
-                {headers.map(header => <td key={header}>{item[header.toLowerCase().replace(/ /g, '_')] !== null ? String(item[header.toLowerCase().replace(/ /g, '_')]) : ''}</td>)}
+  const renderTable = (data, headers, noDataMessage) => {
+    const tableHeaders = headers && headers.length > 0 ? headers : (data && data.length > 0 ? Object.keys(data[0]) : []);
+    const colSpan = tableHeaders.length || 1;
+  
+    return (
+      <TableContainer>
+        <table>
+          <thead>
+            <tr>
+              {tableHeaders.map(header => (
+                <th key={header}>
+                  {header.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {data && data.length > 0 ? (
+              data.map((item, index) => (
+                <tr key={index}>
+                  {tableHeaders.map(header => (
+                    <td key={header}>
+                      {item[header] ?? ''}
+                    </td>
+                  ))}
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={colSpan}>{noDataMessage}</td>
               </tr>
-            ))
-          ) : (
-            <tr><td colSpan={colSpan}>{noDataMessage}</td></tr>
-          )}
-        </tbody>
-      </table>
-    </TableContainer>
-  );
-
+            )}
+          </tbody>
+        </table>
+      </TableContainer>
+    );
+  };
 
   return (
     <ThemeProvider theme={theme}>
@@ -534,6 +542,14 @@ function App() {
               <TabButton onClick={() => setActiveTab('progresso_error')} $active={activeTab === 'progresso_error'}>
                 Erros Progresso ({progressoError.length})
               </TabButton>
+              <DownloadButton
+                    href={`http://localhost:5000/api/download/${requestId}`}
+                    target="_blank"
+                    download
+                    onClick={handleDownloadClick}
+                  >
+                    Extrair em Excel
+                  </DownloadButton>
             </TabContainer>
 
             {activeTab === 'validos' && (
@@ -551,28 +567,19 @@ function App() {
                     <option value="Reprovado">Reprovados</option>
                     <option value="Não Avaliado">Não Avaliados</option>
                   </FilterSelect>
-                  <DownloadButton
-                    href={`http://localhost:5000/api/download/${requestId}`}
-                    target="_blank"
-                    download
-                    onClick={handleDownloadClick}
-                  >
-                    Baixar .XLSX e Limpar
-                  </DownloadButton>
+                  
                 </Toolbar>
                 {renderTable(
                   filteredStudents,
                   ["identificador", "pedido", "produto", "nome_completo", "nascimento", "genero", "email", "profissao", "especialidade", "vinculo", "cidade", "estado", "concluido", "nota", "progresso", "situacao"],
-                  "Nenhum aluno válido encontrado com os filtros atuais.",
-                  16
+                  "Nenhum aluno válido encontrado com os filtros atuais."
                 )}
               </>
             )}
             
-            {activeTab === 'inscricoes_error' && renderTable(inscricoesError, Object.keys(inscricoesError[0] || {}), "Nenhum erro encontrado nas inscrições.", Object.keys(inscricoesError[0] || {}).length)}
-            {activeTab === 'notas_error' && renderTable(notasError, Object.keys(notasError[0] || {}), "Nenhum erro encontrado nas notas.", Object.keys(notasError[0] || {}).length)}
-            {activeTab === 'progresso_error' && renderTable(progressoError, Object.keys(progressoError[0] || {}), "Nenhum erro encontrado no progresso.", Object.keys(progressoError[0] || {}).length)}
-            
+            {activeTab === 'inscricoes_error' && renderTable(inscricoesError, inscricoesError.length > 0 ? Object.keys(inscricoesError[0]) : [], "Nenhum erro encontrado nas inscrições.")}
+            {activeTab === 'notas_error' && renderTable(notasError, notasError.length > 0 ? Object.keys(notasError[0]) : [], "Nenhum erro encontrado nas notas.")}
+            {activeTab === 'progresso_error' && renderTable(progressoError, progressoError.length > 0 ? Object.keys(progressoError[0]) : [], "Nenhum erro encontrado no progresso.")}
           </Section>
         )}
       </AppContainer>

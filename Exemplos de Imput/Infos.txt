@@ -1,0 +1,37 @@
+Inscrição: 
+-pedido	
+-produto	
+-nome_inscricao	
+-nascimento	
+-genero	
+-email_inscricao	
+-profissao	
+-especialidade	
+-vinculo	
+-cidade	
+-estado
+
+
+Notas: 
+-nome_nota	
+-sobrenome_nota	
+-identificador	
+-email_nota	
+-nota	
+-concluido
+
+
+Progresso
+-nome_progresso	
+-progresso
+
+
+Backend:
+1- Excluir o venv antigo
+2 - python -m venv venv
+3 - source venv/Scripts/activate
+4 - pip install Flask pandas PyMySQL SQLAlchemy python-dotenv Flask-Cors openpyxl
+5 - python -m flask run
+
+Frontend
+1 - npm start

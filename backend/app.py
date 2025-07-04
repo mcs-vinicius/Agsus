@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import io
 import uuid
 from unidecode import unidecode
+from datetime import datetime
 
 load_dotenv()  # Carrega variáveis do arquivo .env
 
@@ -204,19 +205,34 @@ def get_students(request_id):
         dados = dados_processados[request_id]
         df_validos = dados["validos"].copy()
         
-        # Converte colunas de data para string antes de enviar como JSON
+        # --- AJUSTE IMPORTANTE ---
+        # Converte todos os valores NaN/NaT para None (que se torna 'null' em JSON)
+        # Isso garante que o frontend receba um formato consistente.
+        df_validos = df_validos.astype(object).where(pd.notnull(df_validos), None)
+
+        # Converte colunas de data para string, tratando os valores 'None' que acabamos de definir
         date_columns = ['pedido', 'nascimento', 'concluido']
         for col in date_columns:
             if col in df_validos.columns:
-                df_validos[col] = df_validos[col].dt.strftime('%d/%m/%Y').replace('NaT', None)
-        
+                # Garante que a coluna é do tipo datetime antes de tentar formatar
+                df_validos[col] = pd.to_datetime(df_validos[col], errors='coerce')
+                # Agora, formata para string, valores NaT (após coerce) virarão None
+                df_validos[col] = df_validos[col].dt.strftime('%d/%m/%Y').replace({pd.NaT: None})
+
+        # Prepara os dataframes de erro da mesma forma para consistência
+        df_inscricoes_error = dados["inscricoes_error"].astype(object).where(pd.notnull(dados["inscricoes_error"]), None)
+        df_notas_error = dados["notas_error"].astype(object).where(pd.notnull(dados["notas_error"]), None)
+        df_progresso_error = dados["progresso_error"].astype(object).where(pd.notnull(dados["progresso_error"]), None)
+
         return jsonify({
             "validos": df_validos.to_dict(orient='records'),
-            "inscricoes_error": dados["inscricoes_error"].to_dict(orient='records'),
-            "notas_error": dados["notas_error"].to_dict(orient='records'),
-            "progresso_error": dados["progresso_error"].to_dict(orient='records'),
+            "inscricoes_error": df_inscricoes_error.to_dict(orient='records'),
+            "notas_error": df_notas_error.to_dict(orient='records'),
+            "progresso_error": df_progresso_error.to_dict(orient='records'),
         })
     except Exception as e:
+        # Adiciona um print para depuração no console do backend
+        print(f"Erro detalhado no endpoint /api/students: {e}")
         return jsonify({"error": f"Erro ao buscar dados: {str(e)}"}), 500
 
 @app.route('/api/download/<request_id>', methods=['GET'])
@@ -238,6 +254,14 @@ def download_file(request_id):
             if col in df_export.columns:
                  df_export[col] = pd.to_datetime(df_export[col]).dt.date
         
+        # --- AJUSTE PARA O NOME DO ARQUIVO ---
+         # Altera o formato da data para DD-MM-YYYY
+        current_date = datetime.now().strftime('%d-%m-%Y') 
+        # Cria o nome do arquivo dinâmico
+        download_name = f'Alunos AGsus {current_date}.xlsx'
+        # --- FIM DO AJUSTE ---
+
+
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl',
                             date_format='DD/MM/YYYY',
@@ -253,7 +277,7 @@ def download_file(request_id):
             output,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             as_attachment=True,
-            download_name='alunos_processados.xlsx'
+            download_name=download_name
         )
 
     except Exception as e:
