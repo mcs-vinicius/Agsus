@@ -1,2 +1,8 @@
+Flask
+Flask-Cors
 pandas
+SQLAlchemy
+PyMySQL
+python-dotenv
 unidecode
+openpyxl
