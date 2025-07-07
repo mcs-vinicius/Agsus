@@ -1,81 +1,69 @@
 # backend/app.py
+
 import os
 import pandas as pd
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
 import io
-import uuid
-from unidecode import unidecode
+import traceback
 from datetime import datetime
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+from unidecode import unidecode
 
-load_dotenv()  # Carrega variáveis do arquivo .env
+load_dotenv()
 
 # --- Configuração ---
 app = Flask(__name__)
-CORS(app)  # Permite requisições do frontend
+CORS(app)
 
-# --- Armazenamento em Memória ---
-# Dicionário para armazenar os dataframes processados por requisição
-dados_processados = {}
+# --- Configuração do Banco de Dados ---
+DB_USER = os.getenv("DB_USER", "root")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "root") # Verifique sua senha
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "3306")
+DB_NAME = os.getenv("DB_NAME", "student_db")
 
-# --- Funções de Processamento de Dados ---
+DATABASE_URI = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+engine = create_engine(DATABASE_URI)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+# --- Funções ---
 def normalize_text(text):
-    """Remove acentos e converte para minúsculas."""
     if isinstance(text, str):
         return unidecode(text).lower()
     return text
 
-def processar_arquivos(file_inscricoes, file_notas, file_progresso):
-    # Tenta ler os CSVs com a codificação UTF-8 e diferentes separadores
+def processar_arquivos_e_separar_erros(file_inscricoes, file_notas, file_progresso):
     try:
+        # Tenta ler com separador ';' primeiro
         df_inscricoes = pd.read_csv(file_inscricoes, sep=';', keep_default_na=False, na_values=[''], encoding='utf-8-sig')
-    except Exception:
-        df_inscricoes = pd.read_csv(file_inscricoes, sep=',', keep_default_na=False, na_values=[''], encoding='utf-8-sig')
-
-    try:
         df_notas = pd.read_csv(file_notas, sep=';', keep_default_na=False, na_values=[''], encoding='utf-8-sig')
-    except Exception:
-        df_notas = pd.read_csv(file_notas, sep=',', keep_default_na=False, na_values=[''], encoding='utf-8-sig')
-
-    try:
         df_progresso = pd.read_csv(file_progresso, sep=';', keep_default_na=False, na_values=[''], encoding='utf-8-sig')
     except Exception:
+        # Se falhar, tenta com ','
+        file_inscricoes.seek(0); file_notas.seek(0); file_progresso.seek(0) # Reinicia o ponteiro dos arquivos
+        df_inscricoes = pd.read_csv(file_inscricoes, sep=',', keep_default_na=False, na_values=[''], encoding='utf-8-sig')
+        df_notas = pd.read_csv(file_notas, sep=',', keep_default_na=False, na_values=[''], encoding='utf-8-sig')
         df_progresso = pd.read_csv(file_progresso, sep=',', keep_default_na=False, na_values=[''], encoding='utf-8-sig')
 
+    erros_list = []
 
-    # --- Validação de Colunas Essenciais ---
     required_insc_cols = ['nome_inscricao', 'email_inscricao']
-    if not all(col in df_inscricoes.columns for col in required_insc_cols):
-        missing_cols = [col for col in required_insc_cols if col not in df_inscricoes.columns]
-        raise ValueError(f"Arquivo 'Inscrições' inválido. Faltam as colunas: {', '.join(missing_cols)}")
+    inscricoes_error = df_inscricoes[df_inscricoes[required_insc_cols].isnull().any(axis=1)].copy()
+    if not inscricoes_error.empty:
+        inscricoes_error['motivo'] = 'Campos obrigatórios em branco (Inscrições)'
+        erros_list.append(inscricoes_error)
+        df_inscricoes.dropna(subset=required_insc_cols, inplace=True)
 
     required_notas_cols = ['nome_nota', 'sobrenome_nota', 'email_nota']
-    if not all(col in df_notas.columns for col in required_notas_cols):
-        missing_cols = [col for col in required_notas_cols if col not in df_notas.columns]
-        raise ValueError(f"Arquivo 'Notas' inválido. Faltam as colunas: {', '.join(missing_cols)}")
-
-    required_progresso_cols = ['nome_progresso']
-    if not all(col in df_progresso.columns for col in required_progresso_cols):
-        missing_cols = [col for col in required_progresso_cols if col not in df_progresso.columns]
-        raise ValueError(f"Arquivo 'Progresso' inválido. Faltam as colunas: {', '.join(missing_cols)}")
-
-    # --- 1. Separação de inconsistências (campos obrigatórios vazios) ---
-    inscricoes_error = df_inscricoes[df_inscricoes[required_insc_cols].isnull().any(axis=1)].copy()
-    inscricoes_error['motivo'] = 'Campo obrigatório em branco no arquivo de Inscrições'
-    df_inscricoes.dropna(subset=required_insc_cols, inplace=True)
-
     notas_error = df_notas[df_notas[required_notas_cols].isnull().any(axis=1)].copy()
-    notas_error['motivo'] = 'Campo obrigatório em branco no arquivo de Notas'
-    df_notas.dropna(subset=required_notas_cols, inplace=True)
+    if not notas_error.empty:
+        notas_error['motivo'] = 'Campos obrigatórios em branco (Notas)'
+        erros_list.append(notas_error)
+        df_notas.dropna(subset=required_notas_cols, inplace=True)
 
-    progresso_error = df_progresso[df_progresso[required_progresso_cols].isnull().any(axis=1)].copy()
-    progresso_error['motivo'] = 'Campo obrigatório em branco no arquivo de Progresso'
-    df_progresso.dropna(subset=required_progresso_cols, inplace=True)
-
-
-    # --- 2. Processamento dos arquivos ---
     df_inscricoes.rename(columns={'nome_inscricao': 'nome_completo', 'email_inscricao': 'email'}, inplace=True)
     df_inscricoes['nome_completo'] = df_inscricoes['nome_completo'].apply(normalize_text)
     df_inscricoes['email'] = df_inscricoes['email'].str.lower()
@@ -85,204 +73,212 @@ def processar_arquivos(file_inscricoes, file_notas, file_progresso):
     df_notas.rename(columns={'email_nota': 'email'}, inplace=True)
     df_notas['email'] = df_notas['email'].str.lower()
     df_notas.drop_duplicates(subset=['email'], keep='first', inplace=True)
-
+    
     df_progresso.rename(columns={'nome_progresso': 'nome_completo'}, inplace=True)
     df_progresso['nome_completo'] = df_progresso['nome_completo'].apply(normalize_text)
     df_progresso.drop_duplicates(subset=['nome_completo'], keep='first', inplace=True)
 
+    df_merged = pd.merge(df_inscricoes, df_notas, on='email', how='outer', indicator='merge_insc_notas')
+    
+    erros_merge1 = df_merged[df_merged['merge_insc_notas'] == 'right_only'].copy()
+    if not erros_merge1.empty:
+        erros_merge1['motivo'] = 'Aluno presente apenas no arquivo de Notas (sem inscrição)'
+        erros_list.append(erros_merge1)
 
-    # --- 3. União (Merge) dos arquivos Inscrição e Notas por E-MAIL ---
-    df_merged_insc_notas = pd.merge(
-        df_inscricoes,
-        df_notas,
-        on='email',
-        how='outer',
-        indicator='merge_insc_notas'
-    )
+    df_merged = df_merged[df_merged['merge_insc_notas'] != 'right_only']
+    df_merged['nome_completo'] = df_merged['nome_completo'].fillna(df_merged['nome_completo_temp'])
 
-    # Cria a coluna 'nome_completo' final, priorizando o nome do arquivo de inscrições
-    df_merged_insc_notas['nome_completo'] = df_merged_insc_notas['nome_completo'].fillna(df_merged_insc_notas['nome_completo_temp'])
-    df_merged_insc_notas.drop(columns=['nome_completo_temp'], inplace=True)
+    df_final_merged = pd.merge(df_merged, df_progresso, on='nome_completo', how='outer', indicator='merge_progresso')
 
+    erros_merge2 = df_final_merged[df_final_merged['merge_progresso'] == 'left_only'].copy()
+    if not erros_merge2.empty:
+        erros_merge2['motivo'] = 'Aluno sem progresso correspondente'
+        erros_list.append(erros_merge2)
+        
+    erros_merge3 = df_final_merged[df_final_merged['merge_progresso'] == 'right_only'].copy()
+    if not erros_merge3.empty:
+        erros_merge3['motivo'] = 'Aluno presente apenas no arquivo de Progresso'
+        erros_list.append(erros_merge3)
 
-    # --- 4. Merge com o arquivo de progresso por NOME COMPLETO ---
-    df_merged_final = pd.merge(df_merged_insc_notas, df_progresso, on='nome_completo', how='outer', indicator='merge_progresso')
+    df_validos = df_final_merged[df_final_merged['merge_progresso'] == 'both'].copy()
 
-    # Identificar e separar inconsistências de merge
-    insc_error_merge = df_merged_final[df_merged_final['merge_insc_notas'] == 'right_only'].copy()
-    insc_error_merge['motivo'] = 'Aluno presente apenas no arquivo de Notas'
+    if not df_validos.empty:
+        date_columns = ['pedido', 'nascimento', 'concluido']
+        for col in date_columns:
+            if col in df_validos.columns:
+                df_validos[col] = pd.to_datetime(df_validos[col], dayfirst=True, errors='coerce')
 
-    notas_error_merge = df_merged_final[df_merged_final['merge_insc_notas'] == 'left_only'].copy()
-    notas_error_merge['motivo'] = 'Aluno presente apenas no arquivo de Inscrições'
+        notas_numericas = pd.to_numeric(df_validos['nota'], errors='coerce')
 
-    progresso_error_merge = df_merged_final[df_merged_final['merge_progresso'] == 'right_only'].copy()
-    progresso_error_merge['motivo'] = 'Aluno presente apenas no arquivo de Progresso'
+        def calcular_situacao(nota):
+            if pd.isna(nota): return 'Não Avaliado'
+            return 'Aprovado' if nota >= 7 else 'Reprovado'
 
-    inscricoes_error = pd.concat([inscricoes_error, insc_error_merge, notas_error_merge])
-    progresso_error = pd.concat([progresso_error, progresso_error_merge])
+        df_validos['situacao'] = notas_numericas.apply(calcular_situacao)
+        df_validos['nota'] = notas_numericas
 
-    df_final = df_merged_final[(df_merged_final['merge_insc_notas'] == 'both') & (df_merged_final['merge_progresso'] != 'right_only')].copy()
+    df_erros_consolidados = pd.concat(erros_list, ignore_index=True) if erros_list else pd.DataFrame()
+    return df_validos, df_erros_consolidados
 
-    if df_final.empty:
-        return df_final, inscricoes_error, notas_error, progresso_error
+def salvar_ou_atualizar_aluno(db_session, aluno_data):
+    aluno_dict = dict(aluno_data)
+    original_identificador = aluno_dict.get('identificador')
+    email = aluno_dict.get('email')
 
-
-    # --- 5. Validação do campo "nota" e criação de "Situação" ---
-    def calcular_situacao(nota):
-        if pd.isna(nota) or str(nota).strip() == '-':
-            return 'Não Avaliado'
+    possible_ids = set()
+    identificador_padronizado = None
+    if original_identificador is not None:
         try:
-            if float(nota) >= 7:
-                return 'Aprovado'
-            else:
-                return 'Reprovado'
+            num_float = float(original_identificador)
+            num_int = int(num_float)
+            identificador_padronizado = str(num_int)
+            possible_ids.add(str(num_int))
+            possible_ids.add(str(num_float))
         except (ValueError, TypeError):
-            return 'Não Avaliado'
+            identificador_padronizado = str(original_identificador)
+            possible_ids.add(identificador_padronizado)
+    else:
+        identificador_padronizado = str(email)
+        possible_ids.add(identificador_padronizado)
+    aluno_dict['identificador'] = identificador_padronizado
 
-    df_final['situacao'] = df_final['nota'].apply(calcular_situacao)
-    df_final['nota'] = pd.to_numeric(df_final['nota'], errors='coerce')
+    existing_record = db_session.execute(text("SELECT identificador, email FROM alunos WHERE identificador IN :ids"),{"ids": list(possible_ids)}).fetchone()
 
-    # Garante que todas as colunas esperadas existam no df_final
-    colunas_finais = [
-        'identificador', 'pedido', 'produto', 'nome_completo', 'nascimento',
-        'genero', 'email', 'profissao', 'especialidade', 'vinculo',
-        'cidade', 'estado', 'concluido', 'nota', 'progresso', 'situacao'
-    ]
-    for col in colunas_finais:
-        if col not in df_final.columns:
-            df_final[col] = None
+    if existing_record:
+        db_session.execute(text("""UPDATE alunos SET identificador = :identificador, pedido = :pedido, produto = :produto, nome_completo = :nome_completo, nascimento = :nascimento, genero = :genero, email = :email, profissao = :profissao, especialidade = :especialidade, vinculo = :vinculo, cidade = :cidade, estado = :estado, concluido = :concluido, nota = :nota, progresso = :progresso, situacao = :situacao WHERE identificador = :existing_id"""), {**aluno_dict, "existing_id": existing_record.identificador})
+    else:
+        email_conflict = db_session.execute(text("SELECT identificador FROM alunos WHERE email = :email"),{"email": email}).fetchone()
+        if email_conflict:
+            raise ValueError(f"Erro de duplicidade: O email '{email}' já está em uso pelo identificador '{email_conflict.identificador}'.")
+        db_session.execute(text("""INSERT INTO alunos (identificador, pedido, produto, nome_completo, nascimento, genero, email, profissao, especialidade, vinculo, cidade, estado, concluido, nota, progresso, situacao) VALUES (:identificador, :pedido, :produto, :nome_completo, :nascimento, :genero, :email, :profissao, :especialidade, :vinculo, :cidade, :estado, :concluido, :nota, :progresso, :situacao)"""), aluno_dict)
 
-    df_final = df_final[colunas_finais]
-
-    # --- 6. Conversão de datas ---
-    date_columns = ['pedido', 'nascimento', 'concluido']
-    for col in date_columns:
-        if col in df_final.columns:
-            df_final[col] = pd.to_datetime(df_final[col], errors='coerce', dayfirst=True)
-
-    return df_final, inscricoes_error, notas_error, progresso_error
-
-# --- Endpoints da API ---
+# --- ROTAS DA API ---
 
 @app.route('/api/upload', methods=['POST'])
 def upload_files():
     if 'inscricoes' not in request.files or 'notas' not in request.files or 'progresso' not in request.files:
         return jsonify({"error": "Arquivos 'inscricoes', 'notas' e 'progresso' são obrigatórios"}), 400
-
-    file_inscricoes = request.files['inscricoes']
-    file_notas = request.files['notas']
-    file_progresso = request.files['progresso']
-
     try:
-        df_processado, df_inscricoes_error, df_notas_error, df_progresso_error = processar_arquivos(
-            file_inscricoes, file_notas, file_progresso
-        )
+        df_validos, df_erros = processar_arquivos_e_separar_erros(request.files['inscricoes'], request.files['notas'], request.files['progresso'])
+        db_session = SessionLocal()
+        try:
+            df_sql = df_validos.astype(object).where(df_validos.notna(), None)
+            for _, row in df_sql.iterrows():
+                try:
+                    salvar_ou_atualizar_aluno(db_session, row)
+                except ValueError as e:
+                    error_row = row.to_frame().T
+                    error_row['motivo'] = str(e)
+                    df_erros = pd.concat([df_erros, error_row], ignore_index=True)
+            db_session.commit()
+        except Exception as db_error:
+            db_session.rollback()
+            raise db_error
+        finally:
+            db_session.close()
 
-        request_id = str(uuid.uuid4())
+        if not df_erros.empty:
+            output = io.BytesIO()
+            df_erros.to_excel(output, index=False, sheet_name='Inconsistencias')
+            output.seek(0)
+            return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name='Erros_Processamento.xlsx')
         
-        dados_processados[request_id] = {
-            "validos": df_processado,
-            "inscricoes_error": df_inscricoes_error,
-            "notas_error": df_notas_error,
-            "progresso_error": df_progresso_error,
-        }
-
-        return jsonify({
-            "message": "Arquivos processados com sucesso!",
-            "requestId": request_id,
-        })
-
+        return jsonify({"message": f"{len(df_validos)} alunos foram processados e salvos com sucesso!"})
     except Exception as e:
-        return jsonify({"error": f"Ocorreu um erro no processamento: {str(e)}"}), 500
+        traceback.print_exc()
+        return jsonify({"error": f"Ocorreu um erro crítico no servidor: {str(e)}"}), 500
 
+# --- ROTAS DE GERENCIAMENTO DE ALUNOS (QUE ESTAVAM FALTANDO) ---
 
-@app.route('/api/students/<request_id>', methods=['GET'])
-def get_students(request_id):
-    if request_id not in dados_processados:
-        return jsonify({"error": "Dados não encontrados para este ID."}), 404
-        
+@app.route('/api/alunos', methods=['GET'])
+def get_all_alunos():
+    query = request.args.get('search', '')
+    db_session = SessionLocal()
     try:
-        dados = dados_processados[request_id]
-        df_validos = dados["validos"].copy()
+        sql_query = text("SELECT * FROM alunos WHERE nome_completo LIKE :query OR email LIKE :query")
+        result = db_session.execute(sql_query, {"query": f"%{query}%"}).fetchall()
         
-        # --- AJUSTE IMPORTANTE ---
-        # Converte todos os valores NaN/NaT para None (que se torna 'null' em JSON)
-        # Isso garante que o frontend receba um formato consistente.
-        df_validos = df_validos.astype(object).where(pd.notnull(df_validos), None)
+        alunos = [dict(row._mapping) for row in result]
+        if not alunos and query: # Se a busca não retornou nada
+             return jsonify([]), 200 # Retorna lista vazia em vez de 404
+        if not alunos and not query: # Se não há alunos no banco
+            return jsonify([]), 200
 
-        # Converte colunas de data para string, tratando os valores 'None' que acabamos de definir
-        date_columns = ['pedido', 'nascimento', 'concluido']
-        for col in date_columns:
-            if col in df_validos.columns:
-                # Garante que a coluna é do tipo datetime antes de tentar formatar
-                df_validos[col] = pd.to_datetime(df_validos[col], errors='coerce')
-                # Agora, formata para string, valores NaT (após coerce) virarão None
-                df_validos[col] = df_validos[col].dt.strftime('%d/%m/%Y').replace({pd.NaT: None})
-
-        # Prepara os dataframes de erro da mesma forma para consistência
-        df_inscricoes_error = dados["inscricoes_error"].astype(object).where(pd.notnull(dados["inscricoes_error"]), None)
-        df_notas_error = dados["notas_error"].astype(object).where(pd.notnull(dados["notas_error"]), None)
-        df_progresso_error = dados["progresso_error"].astype(object).where(pd.notnull(dados["progresso_error"]), None)
-
-        return jsonify({
-            "validos": df_validos.to_dict(orient='records'),
-            "inscricoes_error": df_inscricoes_error.to_dict(orient='records'),
-            "notas_error": df_notas_error.to_dict(orient='records'),
-            "progresso_error": df_progresso_error.to_dict(orient='records'),
-        })
+        return jsonify(alunos)
     except Exception as e:
-        # Adiciona um print para depuração no console do backend
-        print(f"Erro detalhado no endpoint /api/students: {e}")
-        return jsonify({"error": f"Erro ao buscar dados: {str(e)}"}), 500
+        traceback.print_exc()
+        return jsonify({"error": f"Erro ao buscar alunos: {str(e)}"}), 500
+    finally:
+        db_session.close()
 
-@app.route('/api/download/<request_id>', methods=['GET'])
-def download_file(request_id):
-    if request_id not in dados_processados:
-        return jsonify({"error": "Dados não encontrados para este ID."}), 404
-
+@app.route('/api/alunos/<aluno_id>', methods=['PUT'])
+def update_aluno(aluno_id):
+    data = request.json
+    db_session = SessionLocal()
     try:
-        dados = dados_processados[request_id]
-        df_export = dados["validos"].copy()
-        df_inscricoes_error = dados["inscricoes_error"].copy()
-        df_notas_error = dados["notas_error"].copy()
-        df_progresso_error = dados["progresso_error"].copy()
+        with db_session.begin():
+            db_session.execute(text("""UPDATE alunos SET nome_completo = :nome_completo, email = :email, nascimento = :nascimento, genero = :genero, profissao = :profissao, especialidade = :especialidade, vinculo = :vinculo, cidade = :cidade, estado = :estado, nota = :nota, progresso = :progresso, situacao = :situacao WHERE identificador = :id"""), {**data, "id": aluno_id})
+        return jsonify({"message": "Aluno atualizado com sucesso!"})
+    except Exception as e:
+        traceback.print_exc()
+        db_session.rollback()
+        return jsonify({"error": f"Erro ao atualizar aluno: {str(e)}"}), 500
+    finally:
+        db_session.close()
 
-
-        # Formata as datas para o Excel
+@app.route('/api/alunos/download', methods=['GET'])
+def download_alunos_db():
+    query = request.args.get('search', '')
+    db_session = SessionLocal()
+    try:
+        sql_query = text("SELECT * FROM alunos WHERE nome_completo LIKE :query OR email LIKE :query")
+        result = db_session.execute(sql_query, {"query": f"%{query}%"}).fetchall()
+        
+        alunos = [dict(row._mapping) for row in result]
+        if not alunos:
+            return jsonify({"error": "Nenhum aluno encontrado para download."}), 404
+            
+        df_export = pd.DataFrame(alunos)
         date_columns = ['pedido', 'nascimento', 'concluido']
         for col in date_columns:
             if col in df_export.columns:
                  df_export[col] = pd.to_datetime(df_export[col]).dt.date
+
+        current_date = datetime.now().strftime('%d-%m-%Y')
+        download_name = f'Alunos_Registrados_AGsus_{current_date}.xlsx'
         
-        # --- AJUSTE PARA O NOME DO ARQUIVO ---
-         # Altera o formato da data para DD-MM-YYYY
-        current_date = datetime.now().strftime('%d-%m-%Y') 
-        # Cria o nome do arquivo dinâmico
-        download_name = f'Alunos AGsus {current_date}.xlsx'
-        # --- FIM DO AJUSTE ---
-
-
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl',
-                            date_format='DD/MM/YYYY',
-                            datetime_format='DD/MM/YYYY') as writer:
-            df_export.to_excel(writer, index=False, sheet_name='Alunos Processados')
-            df_inscricoes_error.to_excel(writer, index=False, sheet_name='Inscrições ERROR')
-            df_notas_error.to_excel(writer, index=False, sheet_name='Nota ERROR')
-            df_progresso_error.to_excel(writer, index=False, sheet_name='Progresso ERROR')
-        
+        with pd.ExcelWriter(output, engine='openpyxl', date_format='DD/MM/YYYY') as writer:
+            df_export.to_excel(writer, index=False, sheet_name='Alunos Registrados')
         output.seek(0)
-
-        return send_file(
-            output,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            as_attachment=True,
-            download_name=download_name
-        )
-
+        return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=download_name)
     except Exception as e:
+        traceback.print_exc()
         return jsonify({"error": f"Erro ao gerar arquivo para download: {str(e)}"}), 500
+    finally:
+        db_session.close()
 
-
+# --- INICIALIZAÇÃO ---
 if __name__ == '__main__':
+    with engine.connect() as connection:
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS alunos (
+                identificador VARCHAR(255) PRIMARY KEY,
+                pedido DATE,
+                produto VARCHAR(255),
+                nome_completo VARCHAR(255),
+                nascimento DATE,
+                genero VARCHAR(50),
+                email VARCHAR(255) UNIQUE,
+                profissao VARCHAR(255),
+                especialidade VARCHAR(255),
+                vinculo VARCHAR(255),
+                cidade VARCHAR(255),
+                estado VARCHAR(255),
+                concluido DATE,
+                nota INT,
+                progresso VARCHAR(50),
+                situacao VARCHAR(50)
+            );
+        """))
     app.run(debug=True, port=5000)
