@@ -33,5 +33,11 @@ Backend:
 4 - pip install Flask pandas PyMySQL SQLAlchemy python-dotenv Flask-Cors openpyxl
 5 - python -m flask run
 
+backend com BD
+1 -  pip install -r requirements.txt
+
 Frontend
 1 - npm start
+
+
+
